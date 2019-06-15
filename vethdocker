@@ -1,0 +1,91 @@
+#!/bin/sh
+
+# Copyright (c) 2017 Rishabh Dwivedi Email: rishabhdwivedi17@gmail.com
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+NL=$'\n'
+
+get_container_data () {
+    # Get data about the running containers. Accepts arbitrary arguments, so you can pass
+    # a filter to `docker ps` if desired filter
+    docker ps --format '{{.ID}} {{.Names}}' 
+}
+
+get_veth () {
+    # Get the host veth interface attached to a container.
+    c_if_index=$(get_container_if_index $1)
+    a="${dockerveth__addrs%%@if${c_if_index}:*}"
+    b="${a##*${NL}}"
+    printf "${b#* }"
+}
+
+get_container_if_index () {
+    # Get the index number of a docker container's first veth interface (typically eth0)
+    c_pid=$(get_pid $1)
+    ip_netns_export "$c_pid"
+    ils=$(ip netns exec "ns-${c_pid}" ip link show type veth)
+    printf "${ils%%:*}"
+}
+
+ip_netns_export () {
+    # Make a docker container's networking info available to `ip netns`
+    if [ ! -d /var/run/netns ]; then
+        mkdir -p /var/run/netns
+    fi
+    ln  -sf "/proc/${1}/ns/net" "/var/run/netns/ns-${1}"
+}
+
+get_pid () {
+    # Get the PID of a docker container
+    docker inspect --format '{{.State.Pid}}' "$1"
+}
+
+usage () {
+    printf %s \
+"vethdocker - Show which docker containers are attached to which
+\`veth\` interfaces.
+
+Pass container-name as only argument to script
+
+Usage: [-h, --help]
+
+Options:
+    -h, --help          Show this help and exit.
+
+Output:
+    Container veth-pair name
+"
+}
+
+if [ "$#" -ne 1 ]; then
+    echo "Pass container-name as argument"
+    exit
+fi
+
+case "$1" in
+    -h|--help)
+    usage
+    exit 0
+    ;;
+    *)
+    ;;
+esac
+
+dockerveth__addrs="$(ip address show)"
+container_data=$(get_container_data "$@")
+id=$(echo $container_data | awk  '{ for (i=1; i<=NF; i++) { if($i == "'"$1"'") print $(i-1)}}')
+veth=$(get_veth "$id")
+echo $veth | awk '{print $NF}'
+
